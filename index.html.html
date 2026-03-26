@@ -1,0 +1,1682 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowVid — 沉浸短视频</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
+
+<!-- ═══════════════════════════════════════════════
+     🔥 FIREBASE SDK — 第一步：去 Firebase Console 创建项目
+     https://console.firebase.google.com
+     然后替换下面的 firebaseConfig
+     ═══════════════════════════════════════════════ -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.2.0/firebase-app.js";
+  import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.2.0/firebase-auth.js";
+  import { getFirestore, collection, addDoc, getDocs, query, orderBy, serverTimestamp, doc, updateDoc, increment, setDoc, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.2.0/firebase-firestore.js";
+  import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.2.0/firebase-storage.js";
+
+  // ╔═══════════════════════════════════════════════════╗
+  // ║  ⚠️ 请替换成你自己的 Firebase 配置                  ║
+  // ║  在 Firebase Console → 项目设置 → 你的应用 中获取     ║
+  // ╚═══════════════════════════════════════════════════╝
+  const firebaseConfig = {
+    apiKey: "AIzaSyDr8I3BnUTs4Dysu4PrOr3sg9QqBZJfEeE",
+    authDomain: "flowvid-a7429.firebaseapp.com",
+    projectId: "flowvid-a7429",
+    storageBucket: "flowvid-a7429.firebasestorage.app",
+    messagingSenderId: "591193658285",
+    appId: "1:591193658285:web:690db605351f1369df0724",
+    measurementId: "G-6EW2Y84GWG"
+  };
+
+  let app, auth, db, storage, provider;
+  let firebaseReady = false;
+
+  // 尝试初始化 Firebase（如果配置未填则进入 Demo 模式）
+  try {
+    if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
+      app = initializeApp(firebaseConfig);
+      auth = getAuth(app);
+      db = getFirestore(app);
+      storage = getStorage(app);
+      provider = new GoogleAuthProvider();
+      firebaseReady = true;
+
+      onAuthStateChanged(auth, (user) => {
+        if (user) {
+          window.currentUser = {
+            uid: user.uid,
+            name: user.displayName || '用户',
+            photo: user.photoURL,
+            email: user.email
+          };
+          window.handleLoginSuccess(window.currentUser);
+        }
+      });
+    }
+  } catch(e) {
+    console.log('Firebase 未配置，使用 Demo 模式');
+  }
+
+  // 暴露给全局
+  window.firebaseReady = firebaseReady;
+  window.firebaseAuth = auth;
+  window.firebaseDb = db;
+  window.firebaseStorage = storage;
+  window.googleProvider = provider;
+  window.firebaseSignInWithPopup = signInWithPopup;
+  window.firebaseSignOut = signOut;
+  window.firebaseModules = { collection, addDoc, getDocs, query, orderBy, serverTimestamp, doc, updateDoc, increment, setDoc, deleteDoc, getDoc, ref, uploadBytesResumable, getDownloadURL };
+</script>
+
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --card: #16161f;
+    --border: rgba(255,255,255,0.07);
+    --accent: #ff2d55;
+    --accent2: #00d4ff;
+    --accent3: #b44fff;
+    --text: #f0f0f5;
+    --muted: #6b6b80;
+    --sidebar-w: 240px;
+    --right-w: 340px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+  }
+
+  /* ══════════════════════════════════════
+     🔐 LOGIN SCREEN
+     ══════════════════════════════════════ */
+  .login-screen {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.5s, transform 0.5s;
+  }
+  .login-screen.hidden {
+    opacity: 0;
+    transform: scale(1.05);
+    pointer-events: none;
+  }
+  .login-bg-orbs {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .login-bg-orbs .orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(120px);
+    opacity: 0.3;
+    animation: orbFloat 12s ease-in-out infinite alternate;
+  }
+  .login-bg-orbs .orb:nth-child(1) {
+    width: 500px; height: 500px;
+    background: var(--accent);
+    top: -100px; left: -100px;
+  }
+  .login-bg-orbs .orb:nth-child(2) {
+    width: 400px; height: 400px;
+    background: var(--accent3);
+    bottom: -80px; right: -80px;
+    animation-delay: -4s;
+  }
+  .login-bg-orbs .orb:nth-child(3) {
+    width: 300px; height: 300px;
+    background: var(--accent2);
+    top: 40%; left: 60%;
+    animation-delay: -8s;
+  }
+  @keyframes orbFloat {
+    0% { transform: translate(0, 0) scale(1); }
+    100% { transform: translate(40px, -30px) scale(1.15); }
+  }
+
+  .login-card {
+    position: relative;
+    z-index: 2;
+    background: rgba(22,22,31,0.85);
+    backdrop-filter: blur(40px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 28px;
+    padding: 56px 48px;
+    text-align: center;
+    max-width: 420px;
+    width: 90%;
+    animation: loginCardIn 0.6s ease;
+  }
+  @keyframes loginCardIn {
+    from { opacity: 0; transform: translateY(30px) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .login-logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .login-logo .logo-mark {
+    width: 52px; height: 52px;
+    background: var(--accent);
+    border-radius: 14px;
+    display: grid; place-items: center;
+    font-size: 26px;
+    box-shadow: 0 0 40px rgba(255,45,85,0.5);
+  }
+  .login-logo .logo-text {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 34px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #fff 40%, var(--accent));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .login-subtitle {
+    color: var(--muted);
+    font-size: 15px;
+    margin-bottom: 36px;
+    line-height: 1.5;
+  }
+
+  .google-btn {
+    width: 100%;
+    padding: 14px 24px;
+    background: #fff;
+    border: none;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #333;
+    cursor: pointer;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    transition: all 0.2s;
+    margin-bottom: 12px;
+  }
+  .google-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(255,255,255,0.15);
+  }
+  .google-btn svg { width: 20px; height: 20px; }
+
+  .demo-btn {
+    width: 100%;
+    padding: 14px 24px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.2s;
+  }
+  .demo-btn:hover {
+    background: rgba(255,255,255,0.1);
+    color: var(--text);
+  }
+
+  .login-footer {
+    margin-top: 24px;
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  /* ══════════════════════════════════════
+     📱 MAIN APP (same as original + enhancements)
+     ══════════════════════════════════════ */
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    width: var(--sidebar-w);
+    height: 100vh;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 10;
+  }
+
+  .logo {
+    padding: 28px 24px 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo-mark {
+    width: 36px; height: 36px;
+    background: var(--accent);
+    border-radius: 10px;
+    display: grid; place-items: center;
+    font-size: 18px;
+    box-shadow: 0 0 20px rgba(255,45,85,0.4);
+  }
+  .logo-text {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #fff 40%, var(--accent));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .nav {
+    flex: 1;
+    padding: 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .nav::-webkit-scrollbar { display: none; }
+
+  .nav-section-title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    padding: 12px 12px 6px;
+    margin-top: 8px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 14px;
+    transition: all 0.2s;
+    user-select: none;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+  .nav-item.active { background: rgba(255,45,85,0.12); color: var(--accent); }
+  .nav-item .icon { width: 22px; height: 22px; display: grid; place-items: center; font-size: 18px; flex-shrink: 0; }
+  .nav-item .badge {
+    margin-left: auto;
+    background: var(--accent);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 20px;
+    min-width: 20px;
+    text-align: center;
+  }
+  .nav-item .live-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #ff3b30;
+    margin-left: auto;
+    box-shadow: 0 0 8px #ff3b30;
+    animation: livePulse 1.5s ease-in-out infinite;
+  }
+  @keyframes livePulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.3); }
+  }
+
+  .sidebar-bottom {
+    padding: 16px 12px;
+    border-top: 1px solid var(--border);
+  }
+  .user-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .user-card:hover { background: rgba(255,255,255,0.05); }
+  .avatar {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: linear-gradient(135deg, var(--accent), var(--accent3));
+    display: grid; place-items: center;
+    font-size: 15px;
+    font-weight: 700;
+    flex-shrink: 0;
+    color: #fff;
+    overflow: hidden;
+  }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .user-info { flex: 1; min-width: 0; }
+  .user-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .user-handle { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .logout-btn {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 16px; padding: 4px; border-radius: 6px; transition: all 0.2s;
+    flex-shrink: 0;
+  }
+  .logout-btn:hover { color: var(--accent); background: rgba(255,45,85,0.1); }
+
+  /* ── MAIN FEED ── */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  .topbar {
+    height: 64px;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    gap: 16px;
+    background: rgba(10,10,15,0.8);
+    backdrop-filter: blur(12px);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    flex-shrink: 0;
+  }
+
+  .feed-tabs {
+    display: flex;
+    gap: 0;
+    background: rgba(255,255,255,0.04);
+    border-radius: 10px;
+    padding: 4px;
+  }
+  .feed-tab {
+    padding: 7px 18px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--muted);
+    transition: all 0.2s;
+    user-select: none;
+  }
+  .feed-tab.active {
+    background: var(--card);
+    color: var(--text);
+    box-shadow: 0 1px 8px rgba(0,0,0,0.4);
+  }
+
+  .search-bar {
+    flex: 1;
+    max-width: 360px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 14px;
+    margin-left: auto;
+    transition: border-color 0.2s;
+  }
+  .search-bar:focus-within { border-color: rgba(255,45,85,0.4); }
+  .search-bar input {
+    background: none; border: none; outline: none;
+    color: var(--text); font-size: 13px; width: 100%; font-family: inherit;
+  }
+  .search-bar input::placeholder { color: var(--muted); }
+
+  .upload-btn {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 18px;
+    background: var(--accent);
+    border: none; border-radius: 10px;
+    color: #fff; font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: inherit;
+    transition: all 0.2s;
+    flex-shrink: 0;
+    box-shadow: 0 0 16px rgba(255,45,85,0.3);
+  }
+  .upload-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 24px rgba(255,45,85,0.5); }
+
+  /* ── VIDEO FEED ── */
+  .feed {
+    flex: 1;
+    overflow-y: auto;
+    scroll-snap-type: y mandatory;
+    scrollbar-width: none;
+  }
+  .feed::-webkit-scrollbar { display: none; }
+
+  .video-item {
+    height: calc(100vh - 64px);
+    scroll-snap-align: start;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .video-card {
+    width: 100%; height: 100%;
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    cursor: pointer;
+  }
+
+  /* Real video element */
+  .video-bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .video-bg video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  /* Fallback gradient for loading state */
+  .video-bg .video-poster {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.5s;
+  }
+  .video-bg .video-poster.hidden { opacity: 0; pointer-events: none; }
+
+  .video-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.2) 40%, transparent 65%);
+    pointer-events: none;
+  }
+  .video-overlay-top {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 80px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.4), transparent);
+    pointer-events: none;
+  }
+
+  .video-info {
+    position: relative;
+    z-index: 2;
+    padding: 24px 20px 32px;
+    flex: 1;
+    max-width: calc(100% - 72px);
+  }
+
+  .creator-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .creator-avatar {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.5);
+    display: grid; place-items: center;
+    font-size: 16px; font-weight: 700; color: #fff;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .creator-name { font-weight: 700; font-size: 15px; text-shadow: 0 1px 4px rgba(0,0,0,0.5); }
+  .follow-btn {
+    padding: 4px 14px;
+    border: 1.5px solid rgba(255,255,255,0.8);
+    border-radius: 20px;
+    background: transparent;
+    color: #fff;
+    font-size: 12px; font-weight: 600;
+    cursor: pointer; font-family: inherit;
+    transition: all 0.2s;
+  }
+  .follow-btn:hover, .follow-btn.following { background: var(--accent); border-color: var(--accent); }
+
+  .video-caption {
+    font-size: 14px; line-height: 1.5;
+    color: rgba(255,255,255,0.9);
+    margin-bottom: 8px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  }
+  .video-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .tag { font-size: 13px; color: var(--accent2); font-weight: 600; }
+
+  .music-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: rgba(255,255,255,0.75);
+  }
+  .music-disc {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #333, #555);
+    display: grid; place-items: center;
+    font-size: 9px;
+    animation: spin 4s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .video-actions {
+    position: absolute;
+    right: 16px; bottom: 80px;
+    z-index: 2;
+    display: flex; flex-direction: column; gap: 20px;
+    align-items: center;
+  }
+
+  .action-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
+  .action-icon {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.12);
+    backdrop-filter: blur(8px);
+    display: grid; place-items: center;
+    font-size: 22px;
+    transition: all 0.2s;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .action-btn:hover .action-icon { background: rgba(255,255,255,0.2); transform: scale(1.08); }
+  .action-btn.liked .action-icon { background: rgba(255,45,85,0.25); border-color: rgba(255,45,85,0.4); }
+  .action-count { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.9); text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+
+  /* Volume control */
+  .volume-btn {
+    position: absolute;
+    top: 16px; right: 16px;
+    z-index: 4;
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.1);
+    display: grid; place-items: center;
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .volume-btn:hover { background: rgba(0,0,0,0.7); transform: scale(1.1); }
+
+  .progress-bar {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 3px;
+    background: rgba(255,255,255,0.15);
+    z-index: 3;
+    cursor: pointer;
+  }
+  .progress-bar:hover { height: 6px; }
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.1s linear;
+    box-shadow: 0 0 6px var(--accent);
+    pointer-events: none;
+  }
+
+  .play-overlay {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    z-index: 2;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  .play-circle {
+    width: 70px; height: 70px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(8px);
+    display: grid; place-items: center;
+    font-size: 28px;
+    border: 2px solid rgba(255,255,255,0.3);
+  }
+  .video-card.paused .play-overlay { opacity: 1; }
+
+  /* Double-tap like */
+  .double-tap-heart {
+    position: absolute;
+    z-index: 10;
+    font-size: 80px;
+    pointer-events: none;
+    animation: doubleTapHeart 0.8s ease forwards;
+  }
+  @keyframes doubleTapHeart {
+    0% { opacity: 1; transform: scale(0.5); }
+    30% { opacity: 1; transform: scale(1.2); }
+    60% { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(1) translateY(-40px); }
+  }
+
+  /* ── RIGHT PANEL ── */
+  .right-panel {
+    width: var(--right-w);
+    height: 100vh;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 20px 20px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .panel-title { font-size: 15px; font-weight: 700; }
+  .panel-action { font-size: 12px; color: var(--accent); font-weight: 600; cursor: pointer; }
+
+  .comments-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    scrollbar-width: none;
+  }
+  .comments-list::-webkit-scrollbar { display: none; }
+
+  .comment {
+    display: flex; gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    animation: fadeUp 0.3s ease;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .comment-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 12px; font-weight: 700; color: #fff;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .comment-body { flex: 1; }
+  .comment-name { font-size: 12px; font-weight: 700; margin-bottom: 2px; color: rgba(255,255,255,0.9); }
+  .comment-text { font-size: 13px; color: rgba(255,255,255,0.7); line-height: 1.4; }
+  .comment-meta { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+  .comment-time { font-size: 10px; color: var(--muted); }
+  .comment-like { font-size: 11px; color: var(--muted); cursor: pointer; }
+  .comment-like:hover { color: var(--accent); }
+  .comment-reply { font-size: 11px; color: var(--muted); cursor: pointer; font-weight: 600; }
+  .comment-reply:hover { color: var(--text); }
+
+  .comment-input-area {
+    padding: 14px 16px;
+    border-top: 1px solid var(--border);
+    display: flex; gap: 10px; align-items: center;
+    flex-shrink: 0;
+  }
+  .comment-input {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 9px 16px;
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+    font-family: inherit;
+    transition: border-color 0.2s;
+  }
+  .comment-input:focus { border-color: rgba(255,45,85,0.4); }
+  .comment-input::placeholder { color: var(--muted); }
+  .send-btn {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none; cursor: pointer;
+    display: grid; place-items: center;
+    font-size: 16px;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+  .send-btn:hover { transform: scale(1.1); box-shadow: 0 0 12px rgba(255,45,85,0.5); }
+
+  .trending-section {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .trending-title {
+    font-size: 13px; font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 12px;
+  }
+  .trending-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .trending-tag {
+    padding: 5px 12px; border-radius: 20px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all 0.2s;
+    color: var(--muted);
+  }
+  .trending-tag:hover { background: rgba(255,45,85,0.1); border-color: rgba(255,45,85,0.3); color: var(--accent); }
+  .trending-tag.hot { color: var(--accent); border-color: rgba(255,45,85,0.2); background: rgba(255,45,85,0.06); }
+
+  .notif-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    flex-shrink: 0;
+  }
+
+  @keyframes heartPop {
+    0% { transform: scale(1); }
+    30% { transform: scale(1.5); }
+    60% { transform: scale(0.9); }
+    100% { transform: scale(1); }
+  }
+  .heart-pop { animation: heartPop 0.4s ease; }
+
+  /* Upload modal */
+  .upload-modal {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(12px);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999;
+    animation: fadeIn 0.2s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .upload-modal-card {
+    background: var(--card);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 20px;
+    padding: 40px;
+    text-align: center;
+    max-width: 480px;
+    width: 90%;
+    animation: loginCardIn 0.3s ease;
+  }
+  .upload-drop-zone {
+    border: 2px dashed rgba(255,45,85,0.3);
+    border-radius: 12px;
+    padding: 40px;
+    margin: 20px 0;
+    cursor: pointer;
+    background: rgba(255,45,85,0.04);
+    transition: all 0.2s;
+  }
+  .upload-drop-zone:hover, .upload-drop-zone.dragover {
+    border-color: var(--accent);
+    background: rgba(255,45,85,0.1);
+  }
+  .upload-progress {
+    width: 100%;
+    height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 16px 0;
+    display: none;
+  }
+  .upload-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent3));
+    width: 0%;
+    transition: width 0.3s;
+    border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════
+     🔐 LOGIN SCREEN
+     ══════════════════════════════════════ -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-bg-orbs">
+    <div class="orb"></div>
+    <div class="orb"></div>
+    <div class="orb"></div>
+  </div>
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-mark">▶</div>
+      <span class="logo-text">FlowVid</span>
+    </div>
+    <p class="login-subtitle">发现精彩短视频，记录你的创意生活</p>
+    <button class="google-btn" onclick="loginWithGoogle()">
+      <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      使用 Google 账号登录
+    </button>
+    <button class="demo-btn" onclick="loginAsDemo()">
+      🎮 体验 Demo 模式
+    </button>
+    <div class="login-footer">
+      登录即表示你同意我们的服务条款和隐私政策
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     📱 MAIN APP
+     ══════════════════════════════════════ -->
+
+<!-- ── SIDEBAR ── -->
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-mark">▶</div>
+    <span class="logo-text">FlowVid</span>
+  </div>
+  <nav class="nav">
+    <div class="nav-item active" data-page="home" onclick="navigateTo(this, 'home')">
+      <span class="icon">🏠</span> 首页
+    </div>
+    <div class="nav-item" data-page="discover" onclick="navigateTo(this, 'discover')">
+      <span class="icon">🔍</span> 发现
+    </div>
+    <div class="nav-item" data-page="live" onclick="navigateTo(this, 'live')">
+      <span class="icon">📡</span> 直播
+      <div class="live-dot"></div>
+    </div>
+    <div class="nav-item" data-page="inbox" onclick="navigateTo(this, 'inbox')">
+      <span class="icon">📬</span> 收件箱
+      <span class="badge">3</span>
+    </div>
+    <div class="nav-item" data-page="profile" onclick="navigateTo(this, 'profile')">
+      <span class="icon">👤</span> 个人主页
+    </div>
+
+    <div class="nav-section-title">创作者工具</div>
+    <div class="nav-item" onclick="navigateTo(this, 'analytics')">
+      <span class="icon">📊</span> 数据分析
+    </div>
+    <div class="nav-item" onclick="navigateTo(this, 'manage')">
+      <span class="icon">🎬</span> 视频管理
+    </div>
+    <div class="nav-item" onclick="navigateTo(this, 'fund')">
+      <span class="icon">💰</span> 创作者基金
+    </div>
+
+    <div class="nav-section-title">关注的人</div>
+    <div class="nav-item" onclick="navigateTo(this, 'user1')"><span class="icon">🌟</span> 城市街头风</div>
+    <div class="nav-item" onclick="navigateTo(this, 'user2')"><span class="icon">🍜</span> 深夜食堂君</div>
+    <div class="nav-item" onclick="navigateTo(this, 'user3')"><span class="icon">🎵</span> Lo-Fi 电台</div>
+    <div class="nav-item" onclick="navigateTo(this, 'user4')"><span class="icon">✈️</span> 旅行星球</div>
+  </nav>
+
+  <div class="sidebar-bottom">
+    <div class="user-card" id="userCard">
+      <div class="avatar" id="userAvatar">?</div>
+      <div class="user-info">
+        <div class="user-name" id="userName">未登录</div>
+        <div class="user-handle" id="userHandle">请先登录</div>
+      </div>
+      <button class="logout-btn" onclick="handleLogout()" title="退出登录">⏻</button>
+    </div>
+  </div>
+</aside>
+
+<!-- ── MAIN FEED ── -->
+<main class="main">
+  <div class="topbar">
+    <div class="feed-tabs">
+      <div class="feed-tab active" onclick="switchTab(this, 'foryou')">为你推荐</div>
+      <div class="feed-tab" onclick="switchTab(this, 'following')">关注</div>
+      <div class="feed-tab" onclick="switchTab(this, 'live')">直播</div>
+    </div>
+
+    <div class="search-bar">
+      <span>🔍</span>
+      <input placeholder="搜索视频、用户、话题…" id="searchInput">
+    </div>
+
+    <button class="upload-btn" onclick="showUpload()">
+      <span>➕</span> 上传作品
+    </button>
+  </div>
+
+  <div class="feed" id="feed">
+    <!-- Videos injected by JS -->
+  </div>
+</main>
+
+<!-- ── RIGHT PANEL ── -->
+<aside class="right-panel">
+  <div class="trending-section">
+    <div class="trending-title">🔥 热门话题</div>
+    <div class="trending-tags">
+      <div class="trending-tag hot">#城市夜景</div>
+      <div class="trending-tag hot">#深夜食堂</div>
+      <div class="trending-tag">#极简生活</div>
+      <div class="trending-tag">#猫咪日常</div>
+      <div class="trending-tag hot">#街头文化</div>
+      <div class="trending-tag">#旅行vlog</div>
+      <div class="trending-tag">#咖啡时光</div>
+      <div class="trending-tag hot">#新手做菜</div>
+    </div>
+  </div>
+
+  <div class="panel-header">
+    <span class="panel-title">💬 评论 <span id="comment-count" style="color:var(--muted);font-weight:400;font-size:13px">1,284</span></span>
+    <span class="panel-action">排序 ↕</span>
+  </div>
+
+  <div class="comments-list" id="commentsList">
+    <!-- Comments injected by JS -->
+  </div>
+
+  <div class="comment-input-area">
+    <input class="comment-input" id="commentInput" placeholder="发表一条评论…" onkeydown="handleCommentKey(event)">
+    <button class="send-btn" onclick="sendComment()">➤</button>
+  </div>
+</aside>
+
+<script>
+// ══════════════════════════════════════════════════════
+// 🎬 VIDEO DATA — 使用免费公共视频
+// ══════════════════════════════════════════════════════
+const videos = [
+  {
+    id: 1,
+    // 免费公共视频 (Pexels / Pixabay 等无版权视频)
+    videoUrl: 'https://videos.pexels.com/video-files/3571264/3571264-uhd_2560_1440_30fps.mp4',
+    gradient: 'linear-gradient(135deg, #0a1628 0%, #1a2a44 40%, #0d3b66 70%, #1282a2 100%)',
+    emoji: '🌃',
+    creator: '城市街头风',
+    creatorInit: '城',
+    gradientAvatar: 'linear-gradient(135deg, #0d3b66, #1282a2)',
+    caption: '夜幕降临的城市，每一盏灯都在讲一个故事 🌆 你最喜欢哪座城市的夜景？',
+    tags: ['#城市夜景', '#街拍', '#Vlog'],
+    music: 'Midnight City — M83',
+    likes: '42.8万', comments: '1,284', shares: '8.9万', bookmarks: '15.6万',
+  },
+  {
+    id: 2,
+    videoUrl: 'https://videos.pexels.com/video-files/5765446/5765446-uhd_2560_1440_24fps.mp4',
+    gradient: 'linear-gradient(135deg, #1a0a00 0%, #3d1c00 40%, #7a3b00 70%, #c76f00 100%)',
+    emoji: '🍜',
+    creator: '深夜食堂君',
+    creatorInit: '食',
+    gradientAvatar: 'linear-gradient(135deg, #7a3b00, #c76f00)',
+    caption: '当滚烫的汤汁遇上 Q 弹的面条，这就是深夜的治愈 🍜 你们城市最好吃的拉面在哪？',
+    tags: ['#美食', '#深夜食堂', '#拉面'],
+    music: 'Taste of Life — Kitchen Sessions',
+    likes: '28.3万', comments: '2,156', shares: '12.7万', bookmarks: '9.4万',
+  },
+  {
+    id: 3,
+    videoUrl: 'https://videos.pexels.com/video-files/6394054/6394054-uhd_2560_1440_25fps.mp4',
+    gradient: 'linear-gradient(135deg, #f5f0e8 0%, #e8dcc8 40%, #d4c4a8 70%, #baa882 100%)',
+    emoji: '✨',
+    creator: '极简达人',
+    creatorInit: '简',
+    gradientAvatar: 'linear-gradient(135deg, #d4c4a8, #8a7a5a)',
+    caption: '把房间清空到只剩必要的东西，才发现生活可以这么轻盈 ✨ 断舍离不是放弃，是选择',
+    tags: ['#极简主义', '#整理', '#生活方式'],
+    music: 'Empty Space — Ambient Collective',
+    likes: '18.9万', comments: '892', shares: '4.2万', bookmarks: '12.3万',
+  },
+  {
+    id: 4,
+    videoUrl: 'https://videos.pexels.com/video-files/5198420/5198420-uhd_2560_1440_25fps.mp4',
+    gradient: 'linear-gradient(135deg, #1a0030 0%, #2d0050 40%, #4a0080 70%, #6600b3 100%)',
+    emoji: '🎵',
+    creator: 'Lo-Fi 电台',
+    creatorInit: '乐',
+    gradientAvatar: 'linear-gradient(135deg, #4a0080, #b44fff)',
+    caption: '下雨天配上这张专辑，整个世界都安静了 🎧 Lo-fi hip hop 永远的神',
+    tags: ['#音乐', '#lofi', '#雨天'],
+    music: 'Rainy Day Beats Vol.3 — ChillHop',
+    likes: '33.6万', comments: '1,847', shares: '22.1万', bookmarks: '18.8万',
+  },
+  {
+    id: 5,
+    videoUrl: 'https://videos.pexels.com/video-files/2519660/2519660-uhd_2560_1440_24fps.mp4',
+    gradient: 'linear-gradient(135deg, #002a1a 0%, #004d33 40%, #00804d 70%, #00b36b 100%)',
+    emoji: '🌊',
+    creator: '旅行星球',
+    creatorInit: '旅',
+    gradientAvatar: 'linear-gradient(135deg, #00804d, #00d4ff)',
+    caption: '在世界尽头遇见最美的海，这一刻什么烦恼都不重要了 🌊',
+    tags: ['#旅行', '#大海', '#治愈'],
+    music: 'Ocean Waves — Nature Sounds',
+    likes: '56.2万', comments: '3,412', shares: '28.9万', bookmarks: '22.1万',
+  },
+];
+
+const comments = [
+  { name: '北极星_Leo', init: '北', color: '#ff2d55', text: '这个视频真的太治愈了，连续看了五遍 😭', time: '2分钟前', likes: 892 },
+  { name: 'Yuki酱', init: 'Y', color: '#00d4ff', text: '拍摄技术太厉害了！请问用的什么设备？', time: '8分钟前', likes: 234 },
+  { name: '城市漫游者', init: '城', color: '#b44fff', text: '我也在上海，这个地方在哪里啊？想去打卡！', time: '15分钟前', likes: 156 },
+  { name: 'MJ_street', init: 'M', color: '#ff9500', text: '配乐选得绝了，整个氛围感直接拉满 🔥', time: '23分钟前', likes: 412 },
+  { name: '小满同学', init: '满', color: '#30d158', text: '看了你的视频开始学摄影，现在每天出去拍！', time: '31分钟前', likes: 67 },
+  { name: 'Archive_X', init: 'A', color: '#ff375f', text: '这个滤镜是后期加的还是原片？颜色太好看了', time: '45分钟前', likes: 188 },
+  { name: '夜游神', init: '夜', color: '#0a84ff', text: '凌晨三点刷到这个，突然想出门走走了', time: '1小时前', likes: 923 },
+  { name: '数码_Flora', init: 'F', color: '#5ac8fa', text: '关注了！每天都来看你的视频治疗失眠 😂', time: '1小时前', likes: 345 },
+];
+
+// ══════════════════════════════════════════════════════
+// 🔐 AUTH — 登录/登出
+// ══════════════════════════════════════════════════════
+let currentUser = null;
+let isMuted = true;
+
+window.handleLoginSuccess = function(user) {
+  currentUser = user;
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('userName').textContent = user.name;
+  document.getElementById('userHandle').textContent = user.email ? `@${user.email.split('@')[0]}` : '@demo_user';
+  const avatarEl = document.getElementById('userAvatar');
+  if (user.photo) {
+    avatarEl.innerHTML = `<img src="${user.photo}" alt="">`;
+  } else {
+    avatarEl.textContent = user.name.charAt(0);
+  }
+};
+
+function loginWithGoogle() {
+  if (window.firebaseReady && window.firebaseAuth && window.googleProvider) {
+    window.firebaseSignInWithPopup(window.firebaseAuth, window.googleProvider)
+      .then(result => {
+        const u = result.user;
+        window.handleLoginSuccess({
+          uid: u.uid,
+          name: u.displayName || '用户',
+          photo: u.photoURL,
+          email: u.email
+        });
+      })
+      .catch(err => {
+        console.error('Google 登录失败:', err);
+        showToast('⚠️ 登录失败，请检查 Firebase 配置');
+      });
+  } else {
+    showToast('⚠️ Firebase 未配置，请使用 Demo 模式体验');
+  }
+}
+
+function loginAsDemo() {
+  window.handleLoginSuccess({
+    uid: 'demo-user',
+    name: '曼达拉',
+    photo: null,
+    email: 'mandara@demo.com'
+  });
+}
+
+function handleLogout() {
+  if (window.firebaseReady && window.firebaseAuth) {
+    window.firebaseSignOut(window.firebaseAuth);
+  }
+  currentUser = null;
+  document.getElementById('loginScreen').classList.remove('hidden');
+  document.getElementById('userName').textContent = '未登录';
+  document.getElementById('userHandle').textContent = '请先登录';
+  document.getElementById('userAvatar').textContent = '?';
+}
+
+// ══════════════════════════════════════════════════════
+// 🎬 FEED RENDERING — 真实视频播放
+// ══════════════════════════════════════════════════════
+let likedVideos = new Set();
+let bookmarkedVideos = new Set();
+let followedCreators = new Set();
+let lastTapTime = {};
+
+function renderFeed() {
+  const feed = document.getElementById('feed');
+  feed.innerHTML = videos.map((v, i) => `
+    <div class="video-item" data-id="${v.id}">
+      <div class="video-card" onclick="handleVideoClick(event, this, ${v.id})" data-video-id="${v.id}">
+        <div class="video-bg">
+          <video
+            src="${v.videoUrl}"
+            loop
+            muted
+            playsinline
+            preload="${i < 2 ? 'auto' : 'metadata'}"
+            id="video-${v.id}"
+          ></video>
+          <div class="video-poster" id="poster-${v.id}" style="background: ${v.gradient}; display:flex; align-items:center; justify-content:center;">
+            <span style="font-size: clamp(80px,15vw,180px); opacity:0.3; user-select:none;">${v.emoji}</span>
+          </div>
+        </div>
+
+        <div class="volume-btn" onclick="toggleMute(event)" id="vol-${v.id}">
+          ${isMuted ? '🔇' : '🔊'}
+        </div>
+
+        <div class="video-overlay-top"></div>
+        <div class="video-overlay"></div>
+
+        <div class="play-overlay">
+          <div class="play-circle">▶</div>
+        </div>
+
+        <div class="video-info">
+          <div class="creator-row">
+            <div class="creator-avatar" style="background: ${v.gradientAvatar};">${v.creatorInit}</div>
+            <span class="creator-name">${v.creator}</span>
+            <button class="follow-btn ${followedCreators.has(v.id) ? 'following' : ''}" onclick="toggleFollow(event, ${v.id})">${followedCreators.has(v.id) ? '已关注' : '+ 关注'}</button>
+          </div>
+          <p class="video-caption">${v.caption}</p>
+          <div class="video-tags">
+            ${v.tags.map(t => `<span class="tag">${t}</span>`).join('')}
+          </div>
+          <div class="music-row">
+            <div class="music-disc">♪</div>
+            <span>${v.music}</span>
+          </div>
+        </div>
+
+        <div class="video-actions">
+          <div class="action-btn" style="margin-bottom:4px;">
+            <div class="action-icon" style="background: ${v.gradientAvatar}; font-size:16px; font-weight:700;">${v.creatorInit}</div>
+          </div>
+
+          <div class="action-btn ${likedVideos.has(v.id) ? 'liked' : ''}" id="like-${v.id}" onclick="toggleLike(event, ${v.id}, this)">
+            <div class="action-icon">${likedVideos.has(v.id) ? '❤️' : '🤍'}</div>
+            <span class="action-count" id="like-count-${v.id}">${v.likes}</span>
+          </div>
+
+          <div class="action-btn" onclick="focusComment(event)">
+            <div class="action-icon">💬</div>
+            <span class="action-count">${v.comments}</span>
+          </div>
+
+          <div class="action-btn ${bookmarkedVideos.has(v.id) ? 'bookmarked' : ''}" onclick="toggleBookmark(event, ${v.id}, this)">
+            <div class="action-icon" id="bookmark-icon-${v.id}">${bookmarkedVideos.has(v.id) ? '🔖' : '📌'}</div>
+            <span class="action-count">${v.bookmarks}</span>
+          </div>
+
+          <div class="action-btn" onclick="shareVideo(event)">
+            <div class="action-icon">↗️</div>
+            <span class="action-count">${v.shares}</span>
+          </div>
+
+          <div class="action-btn" onclick="showMore(event)">
+            <div class="action-icon">⋯</div>
+          </div>
+        </div>
+
+        <div class="progress-bar" onclick="seekVideo(event, ${v.id})" id="pbar-${v.id}">
+          <div class="progress-fill" id="progress-${v.id}"></div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  // 设置 IntersectionObserver 实现滑动自动播放/暂停
+  setupVideoObserver();
+  // 设置视频进度条更新
+  setupProgressTracking();
+}
+
+// ══════════════════════════════════════════════════════
+// 📺 VIDEO PLAYBACK — 自动播放、暂停、音量
+// ══════════════════════════════════════════════════════
+function setupVideoObserver() {
+  const options = { root: document.getElementById('feed'), threshold: 0.6 };
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      const videoItem = entry.target;
+      const videoId = videoItem.dataset.id;
+      const videoEl = document.getElementById(`video-${videoId}`);
+      const poster = document.getElementById(`poster-${videoId}`);
+      const card = videoItem.querySelector('.video-card');
+
+      if (entry.isIntersecting) {
+        videoEl.play().then(() => {
+          if (poster) poster.classList.add('hidden');
+          card.classList.remove('paused');
+        }).catch(() => {
+          // 浏览器可能阻止自动播放
+        });
+      } else {
+        videoEl.pause();
+      }
+    });
+  }, options);
+
+  document.querySelectorAll('.video-item').forEach(item => observer.observe(item));
+}
+
+function setupProgressTracking() {
+  videos.forEach(v => {
+    const videoEl = document.getElementById(`video-${v.id}`);
+    if (!videoEl) return;
+
+    videoEl.addEventListener('timeupdate', () => {
+      if (videoEl.duration) {
+        const pct = (videoEl.currentTime / videoEl.duration) * 100;
+        const fill = document.getElementById(`progress-${v.id}`);
+        if (fill) fill.style.width = pct + '%';
+      }
+    });
+
+    videoEl.addEventListener('canplay', () => {
+      const poster = document.getElementById(`poster-${v.id}`);
+      if (poster && !videoEl.paused) poster.classList.add('hidden');
+    });
+  });
+}
+
+function handleVideoClick(e, card, videoId) {
+  // 检查是否双击（双击点赞）
+  const now = Date.now();
+  if (lastTapTime[videoId] && now - lastTapTime[videoId] < 300) {
+    // 双击 → 点赞 + 飘心
+    if (!likedVideos.has(videoId)) {
+      const likeBtn = document.getElementById(`like-${videoId}`);
+      if (likeBtn) toggleLike(e, videoId, likeBtn);
+    }
+    showDoubleTapHeart(e, card);
+    lastTapTime[videoId] = 0;
+    return;
+  }
+  lastTapTime[videoId] = now;
+
+  // 单击延迟（等待双击判断）
+  setTimeout(() => {
+    if (lastTapTime[videoId] !== 0) {
+      const videoEl = document.getElementById(`video-${videoId}`);
+      if (videoEl.paused) {
+        videoEl.play();
+        card.classList.remove('paused');
+      } else {
+        videoEl.pause();
+        card.classList.add('paused');
+      }
+    }
+  }, 310);
+}
+
+function showDoubleTapHeart(e, card) {
+  const heart = document.createElement('div');
+  heart.className = 'double-tap-heart';
+  heart.textContent = '❤️';
+  const rect = card.getBoundingClientRect();
+  heart.style.left = (e.clientX - rect.left - 40) + 'px';
+  heart.style.top = (e.clientY - rect.top - 40) + 'px';
+  card.appendChild(heart);
+  setTimeout(() => heart.remove(), 800);
+}
+
+function toggleMute(e) {
+  e.stopPropagation();
+  isMuted = !isMuted;
+  document.querySelectorAll('.video-bg video').forEach(v => { v.muted = isMuted; });
+  document.querySelectorAll('.volume-btn').forEach(b => { b.textContent = isMuted ? '🔇' : '🔊'; });
+}
+
+function seekVideo(e, videoId) {
+  e.stopPropagation();
+  const bar = document.getElementById(`pbar-${videoId}`);
+  const videoEl = document.getElementById(`video-${videoId}`);
+  if (!bar || !videoEl || !videoEl.duration) return;
+  const rect = bar.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  videoEl.currentTime = pct * videoEl.duration;
+}
+
+// ══════════════════════════════════════════════════════
+// 💬 COMMENTS
+// ══════════════════════════════════════════════════════
+function renderComments() {
+  const list = document.getElementById('commentsList');
+  list.innerHTML = comments.map((c, i) => `
+    <div class="comment" style="animation-delay:${i * 0.05}s">
+      <div class="comment-avatar" style="background: linear-gradient(135deg, ${c.color}, ${c.color}88);">${c.init}</div>
+      <div class="comment-body">
+        <div class="comment-name">${c.name}</div>
+        <div class="comment-text">${c.text}</div>
+        <div class="comment-meta">
+          <span class="comment-time">${c.time}</span>
+          <span class="comment-like" onclick="likeComment(this)">❤ ${c.likes}</span>
+          <span class="comment-reply" onclick="replyComment('${c.name}')">回复</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function sendComment() {
+  const input = document.getElementById('commentInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  const userName = currentUser ? currentUser.name : '游客';
+  const userInit = userName.charAt(0);
+
+  const list = document.getElementById('commentsList');
+  const div = document.createElement('div');
+  div.className = 'comment';
+  div.innerHTML = `
+    <div class="comment-avatar" style="background: linear-gradient(135deg, #ff2d55, #b44fff);">${userInit}</div>
+    <div class="comment-body">
+      <div class="comment-name">${userName}</div>
+      <div class="comment-text">${text}</div>
+      <div class="comment-meta">
+        <span class="comment-time">刚刚</span>
+        <span class="comment-like" onclick="likeComment(this)">❤ 0</span>
+        <span class="comment-reply">回复</span>
+      </div>
+    </div>
+  `;
+  list.insertBefore(div, list.firstChild);
+  input.value = '';
+
+  // 如果 Firebase 就绪，保存到数据库
+  if (window.firebaseReady && window.firebaseDb) {
+    const { collection, addDoc, serverTimestamp } = window.firebaseModules;
+    addDoc(collection(window.firebaseDb, 'comments'), {
+      text, userId: currentUser?.uid || 'anon',
+      userName, createdAt: serverTimestamp()
+    }).catch(console.error);
+  }
+
+  const countEl = document.getElementById('comment-count');
+  const cur = parseInt(countEl.textContent.replace(/,/g, ''));
+  countEl.textContent = (cur + 1).toLocaleString('zh-CN');
+}
+
+function handleCommentKey(e) { if (e.key === 'Enter') sendComment(); }
+
+function likeComment(el) {
+  const parts = el.textContent.split(' ');
+  const count = parseInt(parts[1]) + 1;
+  el.textContent = `❤ ${count}`;
+  el.style.color = '#ff2d55';
+}
+
+function replyComment(name) {
+  const input = document.getElementById('commentInput');
+  input.value = `@${name} `;
+  input.focus();
+}
+
+// ══════════════════════════════════════════════════════
+// 🎯 INTERACTIONS — 点赞、收藏、关注、分享
+// ══════════════════════════════════════════════════════
+function toggleLike(e, id, btn) {
+  e.stopPropagation();
+  const icon = btn.querySelector('.action-icon');
+  if (likedVideos.has(id)) {
+    likedVideos.delete(id);
+    btn.classList.remove('liked');
+    icon.textContent = '🤍';
+  } else {
+    likedVideos.add(id);
+    btn.classList.add('liked');
+    icon.textContent = '❤️';
+    icon.classList.add('heart-pop');
+    setTimeout(() => icon.classList.remove('heart-pop'), 400);
+    showFloatingHeart(e);
+  }
+}
+
+function showFloatingHeart(e) {
+  const heart = document.createElement('div');
+  heart.textContent = '❤️';
+  heart.style.cssText = `
+    position:fixed; left:${e.clientX-15}px; top:${e.clientY-15}px;
+    font-size:30px; pointer-events:none; z-index:9999;
+    animation: floatUp 0.8s ease forwards;
+  `;
+  document.body.appendChild(heart);
+  setTimeout(() => heart.remove(), 800);
+}
+
+function toggleBookmark(e, id, btn) {
+  e.stopPropagation();
+  const icon = document.getElementById(`bookmark-icon-${id}`);
+  if (bookmarkedVideos.has(id)) {
+    bookmarkedVideos.delete(id);
+    icon.textContent = '📌';
+  } else {
+    bookmarkedVideos.add(id);
+    icon.textContent = '🔖';
+    showToast('📌 已添加到收藏');
+  }
+}
+
+function toggleFollow(e, id) {
+  e.stopPropagation();
+  const btn = e.target;
+  if (followedCreators.has(id)) {
+    followedCreators.delete(id);
+    btn.textContent = '+ 关注';
+    btn.classList.remove('following');
+  } else {
+    followedCreators.add(id);
+    btn.textContent = '已关注';
+    btn.classList.add('following');
+    showToast('✅ 关注成功');
+  }
+}
+
+function focusComment(e) {
+  e.stopPropagation();
+  document.getElementById('commentInput').focus();
+}
+
+function shareVideo(e) {
+  e.stopPropagation();
+  showToast('🔗 链接已复制到剪贴板');
+}
+
+function showMore(e) { e.stopPropagation(); }
+
+// ══════════════════════════════════════════════════════
+// 📤 UPLOAD — 视频上传（支持 Firebase Storage）
+// ══════════════════════════════════════════════════════
+function showUpload() {
+  if (!currentUser) {
+    showToast('⚠️ 请先登录后再上传');
+    return;
+  }
+
+  const modal = document.createElement('div');
+  modal.className = 'upload-modal';
+  modal.innerHTML = `
+    <div class="upload-modal-card">
+      <div style="font-size:48px;margin-bottom:16px;">🎬</div>
+      <div style="font-size:20px;font-weight:700;margin-bottom:8px;color:var(--text);">上传视频</div>
+      <div style="color:var(--muted);font-size:14px;margin-bottom:8px;line-height:1.6;">
+        支持 MP4、MOV、WebM 格式 · 最大 500MB
+      </div>
+      <div class="upload-drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+        <div style="font-size:40px;margin-bottom:8px;" id="dropIcon">⬆️</div>
+        <div style="font-size:14px;color:var(--muted);" id="dropText">点击选择或拖拽视频到此处</div>
+        <input type="file" id="fileInput" accept="video/*" style="display:none" onchange="handleFileSelect(this)">
+      </div>
+      <div class="upload-progress" id="uploadProgress">
+        <div class="upload-progress-fill" id="uploadProgressFill"></div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px;" id="uploadStatus"></div>
+      <input style="width:100%;padding:10px 14px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;outline:none;font-family:inherit;margin-bottom:12px;" placeholder="添加描述…" id="uploadCaption">
+      <div style="display:flex;gap:10px;">
+        <button onclick="this.closest('.upload-modal').remove()" style="flex:1;padding:12px;background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:10px;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">取消</button>
+        <button onclick="startUpload()" id="uploadSubmitBtn" style="flex:1;padding:12px;background:var(--accent);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;opacity:0.5;pointer-events:none;">发布</button>
+      </div>
+    </div>
+  `;
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+
+  // Drag & drop
+  const dropZone = document.getElementById('dropZone');
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('dragover'); });
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('video/')) {
+      window._uploadFile = file;
+      document.getElementById('dropIcon').textContent = '🎥';
+      document.getElementById('dropText').textContent = `${file.name} (${(file.size/1024/1024).toFixed(1)}MB)`;
+      document.getElementById('uploadSubmitBtn').style.opacity = '1';
+      document.getElementById('uploadSubmitBtn').style.pointerEvents = 'auto';
+    }
+  });
+}
+
+function handleFileSelect(input) {
+  const file = input.files[0];
+  if (!file) return;
+  window._uploadFile = file;
+  document.getElementById('dropIcon').textContent = '🎥';
+  document.getElementById('dropText').textContent = `${file.name} (${(file.size/1024/1024).toFixed(1)}MB)`;
+  document.getElementById('uploadSubmitBtn').style.opacity = '1';
+  document.getElementById('uploadSubmitBtn').style.pointerEvents = 'auto';
+}
+
+function startUpload() {
+  const file = window._uploadFile;
+  if (!file) return;
+
+  const progressBar = document.getElementById('uploadProgress');
+  const progressFill = document.getElementById('uploadProgressFill');
+  const status = document.getElementById('uploadStatus');
+  progressBar.style.display = 'block';
+
+  if (window.firebaseReady && window.firebaseStorage) {
+    // 真实 Firebase 上传
+    const { ref, uploadBytesResumable, getDownloadURL } = window.firebaseModules;
+    const storageRef = ref(window.firebaseStorage, `videos/${Date.now()}_${file.name}`);
+    const uploadTask = uploadBytesResumable(storageRef, file);
+
+    uploadTask.on('state_changed',
+      (snapshot) => {
+        const pct = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        progressFill.style.width = pct + '%';
+        status.textContent = `上传中… ${pct.toFixed(0)}%`;
+      },
+      (error) => {
+        status.textContent = '❌ 上传失败：' + error.message;
+      },
+      async () => {
+        const url = await getDownloadURL(uploadTask.snapshot.ref);
+        status.textContent = '✅ 上传成功！';
+        showToast('🎉 视频上传成功！');
+        // 保存到 Firestore
+        const { collection, addDoc, serverTimestamp } = window.firebaseModules;
+        await addDoc(collection(window.firebaseDb, 'videos'), {
+          url, caption: document.getElementById('uploadCaption')?.value || '',
+          userId: currentUser?.uid, createdAt: serverTimestamp()
+        });
+        setTimeout(() => document.querySelector('.upload-modal')?.remove(), 1500);
+      }
+    );
+  } else {
+    // Demo 模式模拟上传
+    let pct = 0;
+    const interval = setInterval(() => {
+      pct += Math.random() * 15 + 5;
+      if (pct >= 100) {
+        pct = 100;
+        clearInterval(interval);
+        status.textContent = '✅ 上传成功！（Demo 模式）';
+        showToast('🎉 视频上传成功！（Demo 模式）');
+        setTimeout(() => document.querySelector('.upload-modal')?.remove(), 1500);
+      }
+      progressFill.style.width = pct + '%';
+      status.textContent = `上传中… ${pct.toFixed(0)}%`;
+    }, 200);
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// 🧭 NAVIGATION
+// ══════════════════════════════════════════════════════
+function navigateTo(el, page) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  el.classList.add('active');
+  // TODO: 后续实现各页面切换
+  if (page === 'live') showToast('📡 直播功能即将上线！');
+}
+
+function switchTab(el, tab) {
+  document.querySelectorAll('.feed-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  if (tab === 'live') showToast('📡 直播功能即将上线！');
+}
+
+// ══════════════════════════════════════════════════════
+// 🔧 UTILS
+// ══════════════════════════════════════════════════════
+function showToast(msg) {
+  const toast = document.createElement('div');
+  toast.textContent = msg;
+  toast.style.cssText = `
+    position:fixed; bottom:32px; left:50%; transform:translateX(-50%);
+    background:rgba(255,255,255,0.12); backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,0.15); color:#fff;
+    padding:10px 20px; border-radius:24px; font-size:13px; font-weight:600;
+    z-index:99999; animation:toastIn 0.3s ease; font-family:'DM Sans',sans-serif;
+  `;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2500);
+}
+
+// 动画样式
+const animStyle = document.createElement('style');
+animStyle.textContent = `
+  @keyframes floatUp { 0%{opacity:1;transform:translateY(0) scale(1)} 100%{opacity:0;transform:translateY(-60px) scale(1.5)} }
+  @keyframes toastIn { from{opacity:0;transform:translateX(-50%) translateY(10px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+`;
+document.head.appendChild(animStyle);
+
+// ══════════════════════════════════════════════════════
+// 🚀 INIT
+// ══════════════════════════════════════════════════════
+renderFeed();
+renderComments();
+
+// 键盘快捷键
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'm' || e.key === 'M') {
+    isMuted = !isMuted;
+    document.querySelectorAll('.video-bg video').forEach(v => { v.muted = isMuted; });
+    document.querySelectorAll('.volume-btn').forEach(b => { b.textContent = isMuted ? '🔇' : '🔊'; });
+  }
+});
+</script>
+</body>
+</html>
